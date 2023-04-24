@@ -85,10 +85,9 @@
 (require 'rx)
 (require 'url)
 (require 'url-http)
-(require 'json)
 (require 'seq)
 
-(require 'async-await)
+(require 'aio)
 
 ;; setup url library, avoid set cookie failed
 (url-do-setup)
@@ -177,8 +176,8 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Basic Utils ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defun aichat-read-region-or-input (input-prompt)
-  "Read string from region or input."
+(defun aichat-read-region-or-input (&optional input-prompt)
+  "Read string from region or INPUT-PROMPT."
   (if (use-region-p)
       (buffer-substring (region-beginning) (region-end))
     (read-string input-prompt)))
@@ -192,26 +191,23 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; JSON utils ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defmacro aichat-json-serialize (params)
-  "Serialize object to json string."
-  (if (progn
-        (require 'json)
-        (and (fboundp 'json-serialize)
-             (> emacs-major-version 27)))
+  "Serialize PARAMS to json string."
+  (if (fboundp 'json-serialize)
       `(json-serialize ,params
                        :null-object nil
                        :false-object :json-false)
+    (require 'json)
     `(let ((json-false :json-false))
        (json-encode ,params))))
 
 (defmacro aichat-json-parse (str)
   "Parse json string STR."
-  (if (progn
-        (require 'json)
-        (fboundp 'json-parse-string))
+  (if (fboundp 'json-parse-string)
       `(json-parse-string ,str
                           :object-type 'alist
                           :null-object nil
                           :false-object nil)
+    (require 'json)
     `(let ((json-array-type 'vector)
            (json-object-type 'alist)
            (json-false nil))
