@@ -896,13 +896,13 @@ all types in `aichat-bingai--allowed-message-types'."
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Chat ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defcustom aichat-bingai-chat-file (expand-file-name "aichat.md" user-emacs-directory)
-  "File path of save chat message."
+(defcustom aichat-bingai-chat-buffer "*Aichat-BingAI-Assistant*"
+  "The buffer for chat message."
   :group 'aichat-bingai
   :type 'string)
 
 (defcustom aichat-bingai-chat-display-function 'display-buffer
-  "The function of how to display `aichat-bingai-chat-file' buffer."
+  "The function of how to display `aichat-bingai-chat-buffer'."
   :group 'aichat-bingai
   :type 'symbol)
 
@@ -926,17 +926,16 @@ all types in `aichat-bingai--allowed-message-types'."
 
 (defun aichat-bingai--chat-get-buffer ()
   "Get chat buffer."
-  (let ((chat-buffer (get-file-buffer aichat-bingai-chat-file)))
-    (unless chat-buffer
-      (setq chat-buffer (find-file-noselect aichat-bingai-chat-file)))
-    (with-current-buffer chat-buffer
+  (with-current-buffer (get-buffer-create aichat-bingai-chat-buffer)
+    (let ((buffer-file-name "aichat.md"))
+      (set-auto-mode t)
       (goto-char (point-max))
       (when (derived-mode-p 'markdown-mode)
         (when truncate-lines
           (toggle-truncate-lines)))
       (when (and (featurep 'pangu-spacing) pangu-spacing-mode)
-        (pangu-spacing-mode -1)))
-    chat-buffer))
+        (pangu-spacing-mode -1))
+      (current-buffer))))
 
 (defun aichat-bingai--chat-say (chat new-p)
   "Show user said.
@@ -1116,6 +1115,7 @@ NEW-P is t, which means it is a new conversation."
 (defun aichat-bingai-assistant-get-buffer ()
   (get-buffer-create aichat-bingai-assistant-buffer))
 
+;;;###autoload
 (defun aichat-bingai-assistant (text &optional style)
   "Send the region or input to Bing and display the returned result to `aichat-bingai-assistant-buffer'."
   (interactive (list (aichat-read-region-or-input "Input text: ")))
