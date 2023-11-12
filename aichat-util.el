@@ -11,6 +11,7 @@
 ;;           By: xhcoding
 ;; URL: https://github.com/xhcoding/emacs-aichat
 ;; Keywords:
+;; Package-Requires: ((emacs "26.1") (aio "1.0"))
 ;; Compatibility: GNU Emacs 30.0.50
 ;;
 ;; Features that might be required by this library:
@@ -88,7 +89,7 @@
 (require 'seq)
 (require 'websocket)
 (require 'gnutls)
-
+(require 'simple)
 (require 'aio)
 
 ;; setup url library, avoid set cookie failed
@@ -176,6 +177,14 @@
             (substring rnd 18 20)
             (substring rnd 20 32))))
 
+(defmacro aichat--resolve-fn (promise)
+  "Return a resolve-fn for PROMISE."
+  `(lambda (res) (aio-resolve ,promise (lambda () res))))
+
+(defmacro aichat--reject-fn (promise)
+  "Return a reject-fn for PROMISE."
+  `(lambda (res) (aio-cancel ,promise res)))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Basic Utils ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun aichat-read-region-or-input (&optional input-prompt)
@@ -226,42 +235,40 @@
   (let ((res object)
         (start-pos 0))
     (cl-loop for index from 0 to (1- (length str))
-             do (let ((ch (aref str index)))
-                  (cond
-                   ((or (= ch 123) (= ch 91))
+             do (pcase (aref str index)
+                  ((or 123 91)
                     (setq start-pos index))
-                   ((= ch 125)
-                    (setq res `(alist-get ',(intern (substring str (1+ start-pos) index)) ,res)))
-                   ((= ch 93)
-                    (setq res `(aref ,res ,(string-to-number (substring str (1+ start-pos) index))))))))
+                  (125
+                   (setq res `(alist-get ',(intern (substring str (1+ start-pos) index)) ,res)))
+                  (93
+                   (setq res `(aref ,res ,(string-to-number (substring str (1+ start-pos) index)))))))
     res))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Process utils ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(async-defun aichat-start-process (program &rest args)
-  "Async start process with PROGRAM and ARGS.
-
-Returns stdout on success, otherwise returns nil."
-  (aichat-debug "Start process: %s with %s" program args)
-  (condition-case reason
-      (car (await (promise:make-process-with-handler (cons program args) nil t)))
-    (error nil)))
-
-(async-defun aichat-shell-command (command &optional dir)
+(aio-defun aichat-shell-command (command &optional dir)
   "Async run COMMAND in DIR or `default-directory'.
 
 Returns stdout on success, otherwise returns nil."
-  (aichat-debug "Shell command: %s in %s" command dir)
-  (condition-case reason
-      (let ((default-directory (or dir default-directory)))
-        (await (promise:make-shell-command command dir)))
-    (error nil)))
+  (let ((default-directory (or dir default-directory)))
+    (aichat-debug "Shell command: %s in %s" command dir)
+    (let ((promise (aio-promise))
+          (buf (generate-new-buffer " *aichat-shell-command*")))
+      (set-process-sentinel
+       (start-process-shell-command "aichat-shell-command" buf command)
+       (lambda (proc _signal)
+         (when (memq (process-status proc) '(exit signal))
+           (with-current-buffer buf
+             (let ((data (buffer-string)))
+               (aio-resolve promise (lambda () (when (> (length data) 0) (substring data 0 -1))))))
+           (kill-buffer buf))))
+    (aio-await promise))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Cookie utils ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(async-defun aichat--check-deps ()
+(aio-defun aichat--check-deps ()
   "Check if rookiepy is installed."
-  (when-let ((installed (await (aichat-shell-command "python -c \"import rookiepy\""))))
+  (when-let ((installed (aio-await (aichat-shell-command "python -c \"import rookiepy\""))))
     t))
 
 (defun aichat-get-cookies-from-file (filename)
@@ -292,11 +299,11 @@ Returns stdout on success, otherwise returns nil."
           browser-name
           domain))
 
-(async-defun aichat-get-cookies-from-shell (domain browser-name)
+(aio-defun aichat-get-cookies-from-shell (domain browser-name)
   "Get cookies from shell command with rookiepy."
-  (if (not (await (aichat--check-deps)))
+  (if (not (aio-await (aichat--check-deps)))
       (message "Please install rookiepy by `pip3 install rookiepy`")
-    (when-let ((stdout (await
+    (when-let ((stdout (aio-await
                         (aichat-shell-command
                          (aichat--make-get-cookies-command domain browser-name)))))
       (mapcar (lambda (line)
@@ -314,19 +321,18 @@ Returns stdout on success, otherwise returns nil."
                   (list name value expires domain localpart secure)))
               (split-string stdout "\n" t)))))
 
-(async-defun aichat-get-cookies (domain &optional cookie-file)
-  "If `cookie-file' is non-nil, get cookies from `cookie-file', otherwise get cookies from shell."
-  (await nil)
+(aio-defun aichat-get-cookies (domain &optional cookie-file)
+  "Get cookies from COOKIE-FILE if non-nil, otherwise get cookies from shell."
   (if cookie-file
       (aichat-get-cookies-from-file cookie-file)
-    (await (aichat-get-cookies-from-shell domain aichat-browser-name))))
+    (aio-await (aichat-get-cookies-from-shell domain aichat-browser-name))))
 
-(async-defun aichat-refresh-cookies (domain &optional cookie-file)
+(aio-defun aichat-refresh-cookies (domain &optional cookie-file)
   "Refresh `domain' cookies.
 
 Delete all cookies from the cookie store where the domain matches `domain'.
 Re-fetching cookies from `domain'"
-  (when-let ((cookies (await (aichat-get-cookies domain cookie-file))))
+  (when-let ((cookies (aio-await (aichat-get-cookies domain cookie-file))))
     (aichat-debug "%s cookies:\n%s\n" domain cookies)
     (ignore-errors (url-cookie-delete-cookies domain))
     (dolist (cookie cookies)
@@ -1234,36 +1240,39 @@ CALLBACK      (string)   callbacl to receive reported http data.
   (setq url (concat "aichat--" url))
   (unless type
     (setq type "GET"))
-  (promise-new (lambda (resolve reject)
-                 (condition-case error
-                     (let ((url-proxy-services (if proxy
-                                                   (cons (cons  (car (split-string url ":")) proxy) url-proxy-services)
-                                                 url-proxy-services))
-                           (url-user-agent aichat-user-agent)
-                           (url-request-extra-headers headers)
-                           (url-request-method type)
-                           (url-request-data data))
-                       (with-current-buffer
-                           (aichat--url-retrieve url
-                                                 (lambda (status)
-                                                   ;;(display-buffer (current-buffer))
-                                                   (let ((err (plist-get status :error)))
-                                                     (if err
-                                                         (funcall reject err)
-                                                       (funcall resolve (list aichat--http-response-status
-                                                                              aichat--http-response-headers
-                                                                              aichat--http-response-body)))))
-                                                 nil t)
-                         (set (make-local-variable 'url-user-agent) aichat-user-agent)
-                         (setq-local aichat--http-response-callback callback)
-                         (setq-local aichat--http-callback-data callback-data)
-                         (setq-local aichat--http-response-status nil)
-                         (setq-local aichat--http-response-headers nil)
-                         (setq-local aichat--http-response-body nil)
-                         (setq-local aichat--http-reported-header-p nil)
-                         (setq-local aichat--http-report-point 1)
-                         (setq-local aichat--http-response-chunked-p t)))
-                   (error (funcall reject error))))))
+  (let* ((promise (aio-promise))
+         (resolve (aichat--resolve-fn promise))
+         (reject (aichat--reject-fn promise)))
+    (condition-case error
+        (let ((url-proxy-services (if proxy
+                                      (cons (cons  (car (split-string url ":")) proxy) url-proxy-services)
+                                    url-proxy-services))
+              (url-user-agent aichat-user-agent)
+              (url-request-extra-headers headers)
+              (url-request-method type)
+              (url-request-data data))
+          (with-current-buffer
+              (aichat--url-retrieve url
+                                    (lambda (status)
+                                      ;;(display-buffer (current-buffer))
+                                      (let ((err (plist-get status :error)))
+                                        (if err
+                                            (funcall reject err)
+                                          (funcall resolve (list aichat--http-response-status
+                                                                 aichat--http-response-headers
+                                                                 aichat--http-response-body)))))
+                                    nil t)
+            (set (make-local-variable 'url-user-agent) aichat-user-agent)
+            (setq-local aichat--http-response-callback callback)
+            (setq-local aichat--http-callback-data callback-data)
+            (setq-local aichat--http-response-status nil)
+            (setq-local aichat--http-response-headers nil)
+            (setq-local aichat--http-response-body nil)
+            (setq-local aichat--http-reported-header-p nil)
+            (setq-local aichat--http-report-point 1)
+            (setq-local aichat--http-response-chunked-p t)))
+      (error (funcall reject error)))
+    promise))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; curl-backend ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1364,60 +1373,62 @@ CALLBACK      (string)   callbacl to receive reported http data.
   (when params
     (setq url (concat url (if (string-match-p "\\?" url) "&" "?")
                       (aichat--http-urlencode-alist params))))
-  (promise-new (lambda (resolve reject)
-                 (let* ((command (append (list aichat-curl-program "--silent" "--show-error" "--include" "--no-styled-output")
-                                         (when callback
-                                           (list "--no-buffer"))
-                                         (list "--config" "-")))
-                        (config (aichat--curl-make-config url type headers proxy data))
-                        (program (car command))
-                        (stdout (generate-new-buffer (concat "*" program "-stdout*")))
-                        (stderr (generate-new-buffer (concat "*" program "-stderr*")))
-                        (stderr-pipe-name (concat "*" program "-stderr-pipe*"))
-                        (stderr-pipe (make-pipe-process
-                                      :name stderr-pipe-name
-                                      :noquery t
-                                      :filter (lambda (_ output)
-                                                (with-current-buffer stderr
-                                                  (insert output)))))
-                        (cleanup (lambda ()
-                                   (when (buffer-live-p stdout)
-                                     (kill-buffer stdout))
-                                   (delete-process stderr-pipe)
-                                   (when (buffer-live-p stderr)
-                                     (kill-buffer stderr))
-                                   (when (buffer-live-p stderr-pipe-name)
-                                     (kill-buffer stderr-pipe-name)))))
+  (let* ((promise (aio-promise))
+         (resolve (aichat--resolve-fn promise))
+         (reject (aichat--reject-fn promise))
+         (command `( ,aichat-curl-program "--silent" "--show-error" "--include" "--no-styled-output"
+                     ,@(when callback '("--no-buffer"))
+                     "--config" "-"))
+         (config (aichat--curl-make-config url type headers proxy data))
+         (program (car command))
+         (stdout (generate-new-buffer (concat "*" program "-stdout*")))
+         (stderr (generate-new-buffer (concat "*" program "-stderr*")))
+         (stderr-pipe-name (concat "*" program "-stderr-pipe*"))
+         (stderr-pipe (make-pipe-process
+                       :name stderr-pipe-name
+                       :noquery t
+                       :filter (lambda (_ output)
+                                 (with-current-buffer stderr
+                                   (insert output)))))
+         (cleanup (lambda ()
+                    (when (buffer-live-p stdout)
+                      (kill-buffer stdout))
+                    (delete-process stderr-pipe)
+                    (when (buffer-live-p stderr)
+                      (kill-buffer stderr))
+                    (when (buffer-live-p stderr-pipe-name)
+                      (kill-buffer stderr-pipe-name)))))
 
-                   (aichat-debug "cur command: %s, config: \n%s" command config)
-                   (with-current-buffer stdout
-                     (setq-local aichat--curl-stderr stderr)
-                     (setq-local aichat--curl-cleanup cleanup)
-                     (setq-local aichat--curl-resolve resolve)
-                     (setq-local aichat--curl-reject reject)
+    (aichat-debug "cur command: %s, config: \n%s" command config)
+    (with-current-buffer stdout
+      (setq-local aichat--curl-stderr stderr)
+      (setq-local aichat--curl-cleanup cleanup)
+      (setq-local aichat--curl-resolve resolve)
+      (setq-local aichat--curl-reject reject)
 
-                     (setq-local aichat--curl-parser-state 'status)
-                     (setq-local aichat--curl-parser-point (point-min))
+      (setq-local aichat--curl-parser-state 'status)
+      (setq-local aichat--curl-parser-point (point-min))
 
-                     (setq-local aichat--curl-response-status nil)
-                     (setq-local aichat--curl-response-headers nil)
-                     (setq-local aichat--curl-response-body nil)
+      (setq-local aichat--curl-response-status nil)
+      (setq-local aichat--curl-response-headers nil)
+      (setq-local aichat--curl-response-body nil)
 
-                     (setq-local aichat--curl-response-callback callback)
-                     (setq-local aichat--http-callback-data callback-data))
+      (setq-local aichat--curl-response-callback callback)
+      (setq-local aichat--http-callback-data callback-data))
 
-                   (condition-case err
-                       (let ((proc (make-process
-                                    :name program
-                                    :buffer stdout
-                                    :command command
-                                    :stderr stderr-pipe
-                                    :filter #'aichat--curl-process-filter
-                                    :sentinel #'aichat--curl-process-sentinel)))
-                         (process-send-string proc config)
-                         (process-send-eof proc))
-                     (error (funcall cleanup)
-                            (signal (car err) (cdr err))))))))
+    (condition-case err
+        (let ((proc (make-process
+                     :name program
+                     :buffer stdout
+                     :command command
+                     :stderr stderr-pipe
+                     :filter #'aichat--curl-process-filter
+                     :sentinel #'aichat--curl-process-sentinel)))
+          (process-send-string proc config)
+          (process-send-eof proc))
+      (error (funcall cleanup)
+             (signal (car err) (cdr err))))
+    promise))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; HTTP API ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -1471,48 +1482,50 @@ PARAMS         (alist)   set \"?key=val\" part in URL
 HEADERS        (alist)   additional headers to send with the request
 DATA          (string)   data to be sent to the server
 "
-  (promise-then (aichat-http url
-                             :backend backend
-                             :proxy proxy
-                             :type type
-                             :params params
-                             :headers headers
-                             :data data
-                             :callback-data `((handle-data-p . ,t)
-                                              (event-buffer . nil)
-                                              (event-callback . ,callback))
-                             :callback (lambda (status data)
-                                         (aichat-debug "status: %s, handle: %s, data: \n%s" status (alist-get 'handle-data-p aichat--http-callback-data) data)
-                                         (when (alist-get 'handle-data-p aichat--http-callback-data)
-                                           (pcase status
-                                             ('status
-                                              (unless (string= "200" (car data))
-                                                (setf (alist-get 'handle-data-p aichat--http-callback-data) nil)))
-                                             ('headers
-                                              (unless (string= "text/event-stream"
-                                                               (aichat-read-header-value "Content-Type" data))
-                                                (setf (alist-get 'handle-data-p aichat--http-callback-data) nil)))
-                                             ('body
-                                              (let ((buffer (concat (alist-get 'event-buffer aichat--http-callback-data) data))
-                                                    (start-pos 0)
-                                                    (match-start))
-                                                (while (setq match-start (string-match-p "\n\n" buffer start-pos))
-                                                  (let ((lines (split-string (substring buffer start-pos match-start) "\n"))
-                                                        (event-data nil)
-                                                        (event-id nil))
-                                                    (dolist (line lines)
-                                                      (seq-let (prefix data) (split-string line ": ")
-                                                        (cond
-                                                         ((string= "data" prefix) (setq event-data (concat event-data data "\n")))
-                                                         ((string= "event" prefix) (setq event-id data)))))
-                                                    (when event-data
-                                                      (funcall (alist-get 'event-callback aichat--http-callback-data) event-id (string-trim-right event-data))))
-                                                  (setq start-pos (+ 2 match-start)))
-                                                (setf (alist-get 'event-buffer aichat--http-callback-data) (substring buffer start-pos))))))))
-                (lambda (value)
-                  (promise-resolve value))
-                (lambda (err)
-                  (promise-reject err))))
+  (aichat-http url
+               :backend backend
+               :proxy proxy
+               :type type
+               :params params
+               :headers headers
+               :data data
+               :callback-data `((handle-data-p . ,t)
+                                (event-buffer . nil)
+                                (event-callback . ,callback))
+               :callback (lambda (status data)
+                           (aichat-debug "status: %s, handle: %s, data: \n%s"
+                                         status
+                                         (alist-get 'handle-data-p aichat--http-callback-data)
+                                         data)
+                           (when (alist-get 'handle-data-p aichat--http-callback-data)
+                             (pcase status
+                               ('status
+                                (unless (string= "200" (car data))
+                                  (setf (alist-get 'handle-data-p aichat--http-callback-data) nil)))
+                               ('headers
+                                (unless (string= "text/event-stream"
+                                                 (aichat-read-header-value "Content-Type" data))
+                                  (setf (alist-get 'handle-data-p aichat--http-callback-data) nil)))
+                               ('body
+                                (let ((buffer (concat (alist-get 'event-buffer aichat--http-callback-data)
+                                                      data))
+                                      (start-pos 0)
+                                      (match-start))
+                                  (while (setq match-start (string-match-p "\n\n" buffer start-pos))
+                                    (let ((lines (split-string (substring buffer start-pos match-start) "\n"))
+                                          (event-data nil)
+                                          (event-id nil))
+                                      (dolist (line lines)
+                                        (seq-let (prefix data) (split-string line ": ")
+                                          (pcase prefix
+                                            ("data" (setq event-data (concat event-data data "\n")))
+                                            ("event" (setq event-id data)))))
+                                      (when event-data
+                                        (funcall (alist-get 'event-callback aichat--http-callback-data)
+                                                 event-id (string-trim-right event-data))))
+                                    (setq start-pos (+ 2 match-start)))
+                                  (setf (alist-get 'event-buffer aichat--http-callback-data)
+                                        (substring buffer start-pos)))))))))
 
 (provide 'aichat-util)
 

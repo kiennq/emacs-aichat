@@ -81,7 +81,7 @@
 
 ;;; Require
 (require 'ert)
-(require 'async-await)
+(require 'aio)
 
 (add-to-list 'load-path (expand-file-name ".." default-directory))
 

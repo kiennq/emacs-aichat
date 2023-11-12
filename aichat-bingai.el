@@ -288,11 +288,10 @@ to the websocket protocol.
     (and user
          (not (url-cookie-expired-p user)))))
 
-(async-defun aichat-bingai--login ()
+(aio-defun aichat-bingai--login ()
   "Login `aichat-bingai--domain'."
-  (await t)
   (unless (aichat-bingai--login-p)
-    (await (aichat-refresh-cookies aichat-bingai--domain aichat-bingai-cookies-file))
+    (aio-await (aichat-refresh-cookies aichat-bingai--domain aichat-bingai-cookies-file))
     (unless (aichat-bingai--login-p)
       (error "Can not get correct cookie for login!"))))
 
@@ -328,23 +327,24 @@ to the websocket protocol.
   signature
   client-id)
 
-(async-defun aichat-bingai--create-conversation ()
+(aio-defun aichat-bingai--create-conversation ()
   "Create a conversation through the GET request `aichat-bingai--conversation-url'."
-  (await (aichat-bingai--login))
-  (seq-let
-      (status headers body)
-      (await (aichat-http aichat-bingai--create-conversation-url
-                          :proxy aichat-bingai-proxy
-                          :headers aichat-bingai--conversation-headers))
+  (aio-await (aichat-bingai--login))
+  (pcase-let (((seq status headers body)
+               (aio-await (aichat-http aichat-bingai--create-conversation-url
+                                       :proxy aichat-bingai-proxy
+                                       :headers aichat-bingai--conversation-headers))))
     (aichat-debug "status:\n%s\nheaders:\n%s\nbody:\n%s\n" status headers body)
     (if (not (string= "200" (car status)))
         (error "Create conversation failed: %s" status)
       (if (string-empty-p body)
-          (error "Your network settings are preventing access to this feature.")
+          (error "Your network settings are preventing access to this feature")
         (let* ((data (aichat-json-parse body))
                (result-value (aichat-json-access data "{result}{value}"))
-               (signature (cdr (seq-find (lambda (header) (string= (downcase (car header)) "x-sydney-encryptedconversationsignature"))
-                                    headers))))
+               (signature (cdr (seq-find
+                                (lambda (header)
+                                  (string= (downcase (car header)) "x-sydney-encryptedconversationsignature"))
+                                headers))))
           (if (not (string= "Success" result-value))
               (error "Create conversation failed: %s" body)
             (aichat-bingai--conversation-new
@@ -461,47 +461,50 @@ Call `user-cb' when a message arrives."
   "The url of create chathub.")
 
 (defun aichat-bingai--create-chathub (session)
-  "Create a websocket connection to `aichat-bingai--chathub-url'.
+  "Create a websocket connection to `aichat-bingai--chathub-url' with SESSION.
 
 Call resolve when the handshake with chathub passed."
-  (promise-new
-   (lambda (resolve reject)
-     (aichat-bingai--websocket-open
-      (concat aichat-bingai--chathub-url "?sec_access_token="
-              (url-hexify-string (aichat-bingai--conversation-signature (aichat-bingai--session-conversation session))))
-      :proxy aichat-bingai-proxy
-      :custom-header-alist aichat-bingai--chathub-headers
-      :on-open (lambda (ws)
-                 (aichat-debug "====== chathub opened ======")
-                 ;; send handshake
-                 (if (and ws (websocket-openp ws))
-                     (websocket-send-text ws (concat (aichat-json-serialize
-                                                      (list :protocol "json" :version 1))
-                                                     aichat-bingai--chathub-message-delimiter))
-                   (funcall reject "Chathub unexpected closed during handshake.")))
-      :on-close (lambda (_ws)
-                  (aichat-debug "====== chathub closed ======")
-                  (if (not (aichat-bingai--session-chathub session))
-                      (funcall reject "Chathub unexpected closed during handshake.")
-                    (setf (aichat-bingai--session-chathub session) nil)
-                    (when (aichat-bingai--session-replying session)
-                      ;; close when replying
-                      (setf (aichat-bingai--session-replying session) nil)
-                      (when-let ((reject-func (aichat-bingai--session-reject session)))
-                        (funcall  reject-func "Chathub closed unexpectedly during reply.")))))
-      :on-message (lambda (ws frame)
-                    (let ((text (websocket-frame-text frame)))
-                      (condition-case error
-                          (progn
-                            (aichat-debug "Receive handshake response: %s" text)
-                            (aichat-json-parse (car (split-string text aichat-bingai--chathub-message-delimiter)))
-                            (aichat-bingai--chathub-send-heart ws)
-                            (setf (websocket-on-message ws)
-                                  (lambda (_ws frame)
-                                    (aichat-bingai--chathub-parse-message session (websocket-frame-text frame))))
-                            (setf (aichat-bingai--session-chathub session) ws)
-                            (funcall resolve t))
-                        (error (funcall reject error)))))))))
+  (let* ((response (aio-promise))
+         (resolve (aichat--resolve-fn response))
+         (reject (aichat--reject-fn response)))
+    (aichat-bingai--websocket-open
+     (concat aichat-bingai--chathub-url "?sec_access_token="
+             (thread-first session aichat-bingai--session-conversation
+                           aichat-bingai--conversation-signature url-hexify-string))
+     :proxy aichat-bingai-proxy
+     :custom-header-alist aichat-bingai--chathub-headers
+     :on-open (lambda (ws)
+                (aichat-debug "====== chathub opened ======")
+                ;; send handshake
+                (if (and ws (websocket-openp ws))
+                    (websocket-send-text ws (concat (aichat-json-serialize
+                                                     (list :protocol "json" :version 1))
+                                                    aichat-bingai--chathub-message-delimiter))
+                  (funcall reject "Chathub unexpected closed during handshake.")))
+     :on-close (lambda (_ws)
+                 (aichat-debug "====== chathub closed ======")
+                 (if (not (aichat-bingai--session-chathub session))
+                     (funcall reject "Chathub unexpected closed during handshake.")
+                   (setf (aichat-bingai--session-chathub session) nil)
+                   (when (aichat-bingai--session-replying session)
+                     ;; close when replying
+                     (setf (aichat-bingai--session-replying session) nil)
+                     (when-let ((reject-func (aichat-bingai--session-reject session)))
+                       (funcall  reject-func "Chathub closed unexpectedly during reply.")))))
+     :on-message (lambda (ws frame)
+                   (let ((text (websocket-frame-text frame)))
+                     (condition-case error
+                         (progn
+                           (aichat-debug "Receive handshake response: %s" text)
+                           (aichat-json-parse (car (split-string text aichat-bingai--chathub-message-delimiter)))
+                           (aichat-bingai--chathub-send-heart ws)
+                           (setf (websocket-on-message ws)
+                                 (lambda (_ws frame)
+                                   (aichat-bingai--chathub-parse-message session (websocket-frame-text frame))))
+                           (setf (aichat-bingai--session-chathub session) ws)
+                           (funcall resolve t))
+                       (error (funcall reject error))))))
+    response))
 
 (defun aichat-bingai--close-chathub (session)
   "Close chathub websocket connection."
@@ -618,17 +621,17 @@ Call resolve when the handshake with chathub passed."
     (aichat-bingai--close-chathub session)
     (aichat-bingai--remove-current-session)))
 
-(async-defun aichat-bingai--start-session ()
+(aio-defun aichat-bingai--start-session ()
   "Start a new aichat-bingai session."
-  (await t)
   (aichat-bingai--stop-session)
-  (when-let ((conversation (await (aichat-bingai--create-conversation)))
+  (when-let ((conversation (aio-await (aichat-bingai--create-conversation)))
              (session (aichat-bingai--session-new
                        :conversation conversation)))
     (aichat-bingai--set-current-session session)
     t))
 
 (defun aichat-bingai--ensure-conversation-valid ()
+  "NO DOC."
   (when-let* ((session (aichat-bingai--get-current-session))
               (invocation-id (aichat-bingai--session-invocation-id session))
               (max-conversation (aichat-bingai--session-max-conversation session)))
@@ -641,71 +644,73 @@ Call resolve when the handshake with chathub passed."
     (when (>= invocation-id max-conversation)
       (aichat-bingai--stop-session))))
 
-(async-defun aichat-bingai--send-request (text style allowed-message-types options-sets &optional callback)
+(aio-defun aichat-bingai--send-request (text style allowed-message-types options-sets &optional callback)
   (aichat-bingai--ensure-conversation-valid)
   (let ((session (aichat-bingai--get-current-session)))
     (unless session
-      (await (aichat-bingai--start-session))
+      (aio-await (aichat-bingai--start-session))
       (setq session (aichat-bingai--get-current-session)))
     (unless (aichat-bingai--session-chathub session)
-      (await (aichat-bingai--create-chathub session)))
+      (aio-await (aichat-bingai--create-chathub session)))
 
-    (await (promise-new
-            (lambda (resolve reject)
-              (let ((request (aichat-bingai--make-request session text style allowed-message-types options-sets)))
-                (aichat-debug "Send request:\n%s\n" request)
-                (websocket-send-text (aichat-bingai--session-chathub session) request)
-                (setf (aichat-bingai--session-invocation-id session) (1+ (aichat-bingai--session-invocation-id session))
-                      (aichat-bingai--session-replying session) t
-                      (aichat-bingai--session-buffer session) ""
-                      (aichat-bingai--session-resolve session) resolve
-                      (aichat-bingai--session-reject session) reject
-                      (aichat-bingai--session-result session) nil
-                      (aichat-bingai--session-err session) nil
-                      (aichat-bingai--session-user-cb session) callback)))))))
-
+    (let ((promise (aio-promise))
+          (request (aichat-bingai--make-request session text style allowed-message-types options-sets)))
+      (aichat-debug "Send request:\n%s\n" request)
+      (websocket-send-text (aichat-bingai--session-chathub session) request)
+      (setf (aichat-bingai--session-invocation-id session) (1+ (aichat-bingai--session-invocation-id session))
+            (aichat-bingai--session-replying session) t
+            (aichat-bingai--session-buffer session) ""
+            (aichat-bingai--session-resolve session) (aichat--resolve-fn promise)
+            (aichat-bingai--session-reject session) (aichat--reject-fn promise)
+            (aichat-bingai--session-result session) nil
+            (aichat-bingai--session-err session) nil
+            (aichat-bingai--session-user-cb session) callback)
+      (aio-await promise))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Image  API ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(async-defun aichat-bingai--image-download (urls resolve reject)
-  (await nil)
+(aio-defun aichat-bingai--image-download (urls resolve reject)
   (condition-case error
       (let ((paths))
         (dolist (url urls)
           (when-let* ((name (concat (car (last (split-string (car (split-string url "?")) "/"))) ".jpeg"))
                       (filepath (expand-file-name name (temporary-file-directory)))
-                      (output (await (aichat-shell-command (format "%s --silent \"%s\" --output %s" aichat-curl-program url filepath)))))
+                      (output (aio-await (aichat-shell-command (format "%s --silent \"%s\" --output %s"
+                                                                       aichat-curl-program url filepath)))))
             (push (cons url filepath) paths)))
         (funcall resolve paths))
     (error (funcall reject error))))
 
 (defun aichat-bingai--image-polling (request-id prompt resolve reject)
   (let ((polling-url (format "https://www.bing.com/images/create/async/results/%s" request-id)))
-    (promise-then (aichat-http polling-url
-                               :proxy aichat-bingai-proxy
-                               :params `(("q" . ,prompt)))
-                  (lambda (response)
-                    (if (not (string= "200" (caar response)))
-                        (progn
-                          (funcall reject (format "Polling image error: %s" response)))
-                      (let ((body (car (last response)))
-                            (urls (list)))
-                        (if (string-empty-p body)
-                            (run-at-time 5 nil #'aichat-bingai--image-polling request-id prompt resolve reject)
-                          (with-temp-buffer
-                            (insert body)
-                            (goto-char (point-min))
-                            (while (re-search-forward (rx "src=\""
-                                                          (group (1+ (not "\"")))
-                                                          "\"")
-                                                      nil t)
-                              (push (match-string 1) urls))
-                            (aichat-bingai--image-download urls resolve reject))))))
-                  (lambda (err)
-                    (message "Polling error but continue: %s" err)
-                    (run-at-time 5 nil #'aichat-bingai--image-polling request-id prompt resolve reject)))))
+    (aio-with-async
+      (pcase (aio-await (aio-catch (aichat-http polling-url
+                                                :proxy aichat-bingai-proxy
+                                                :params `(("q" . ,prompt)))))
+        (`(:success . ,response)
+          (if (not (string= "200" (caar response)))
+              (funcall reject (format "Polling image error: %s" response))
+            (let ((body (car (last response)))
+                  (urls (list)))
+              (if (string-empty-p body)
+                  (progn
+                    (aio-await (aio-sleep 5))
+                    (aichat-bingai--image-polling request-id prompt resolve reject))
+                (with-temp-buffer
+                  (insert body)
+                  (goto-char (point-min))
+                  (while (re-search-forward (rx "src=\""
+                                                (group (1+ (not "\"")))
+                                                "\"")
+                                            nil t)
+                    (push (match-string 1) urls))
+                  (aichat-bingai--image-download urls resolve reject))))))
+        (`(:error . ,err)
+         (message "Polling error but continue: %s" err)
+         (aio-await (aio-sleep 5))
+         (aichat-bingai--image-polling request-id prompt resolve reject))))))
 
-(async-defun aichat-bingai--image-create (prompt)
+(aio-defun aichat-bingai--image-create (prompt)
   "Create images with PROMPT."
   (let ((iframeid (aichat-uuid))
         (response)
@@ -713,24 +718,25 @@ Call resolve when the handshake with chathub passed."
         (redirect-url)
         (request-id)
         (polling-url))
-    (setq response (await (aichat-http "https://www.bing.com/images/create"
-                                       :proxy aichat-bingai-proxy
-                                       :type "POST"
-                                       :params `(("q" . ,prompt)
-                                                 ("rt" . "3")
-                                                 ("FORM" . "GENCRE"))
-                                       :data "")))
+    (setq response (aio-await (aichat-http "https://www.bing.com/images/create"
+                                           :proxy aichat-bingai-proxy
+                                           :type "POST"
+                                           :params `(("q" . ,prompt)
+                                                     ("rt" . "3")
+                                                     ("FORM" . "GENCRE"))
+                                           :data "")))
     (if (not (string= "302" (caar response)))
         (error (format "Image create: %s" response))
       (setq location (aichat-read-header-value "Location" (cadr response)))
       (setq redirect-url (concat "https://www.bing.com" (replace-regexp-in-string "&nfy=1" "" location)))
       (setq request-id (cadr (split-string redirect-url "id=")))
-      (setq response (await (aichat-http redirect-url
-                                         :proxy aichat-bingai-proxy)))
-      (await
-       (promise-new
-        (lambda (resolve reject)
-          (aichat-bingai--image-polling request-id prompt resolve reject)))))))
+      (setq response (aio-await (aichat-http redirect-url
+                                             :proxy aichat-bingai-proxy)))
+      (let ((promise (aio-promise)))
+        (aichat-bingai--image-polling request-id prompt
+                                      (aichat--resolve-fn promise)
+                                      (aichat--reject-fn promise))
+        (aio-await promise)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; bingai API ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -746,6 +752,7 @@ Call resolve when the handshake with chathub passed."
 
 (defun aichat-bingai-conversation-reset ()
   "Reset conversation."
+  (interactive)
   (aichat-bingai--stop-session))
 
 (cl-defun aichat-bingai-conversation (text &rest settings
@@ -761,19 +768,21 @@ Call resolve when the handshake with chathub passed."
 `allowed-message-types' is the message type allowed to return,
 all types in `aichat-bingai--allowed-message-types'."
   (when (aichat-bingai-conversationing-p)
-    (error "Please wait for the conversation finished before call."))
+    (error "Please wait for the conversation finished before call"))
   (unless style
     (setq style aichat-bingai-conversation-style))
   (unless allowed-message-types
-    (setq allowed-message-types (vector "Chat")))
+    (setq allowed-message-types ["Chat"]))
 
-  (promise-then (aichat-bingai--send-request text style allowed-message-types options-sets)
-                (lambda (result)
-                  (when on-success
-                    (funcall on-success result)))
-                (lambda (err)
-                  (when on-error
-                    (funcall on-error err)))))
+  (aio-with-async
+    (pcase (aio-await (aio-catch (aichat-bingai--send-request
+                                  text style allowed-message-types options-sets)))
+      (`(:success . ,result)
+       (when on-success
+         (funcall on-success result)))
+      (`(:error . ,err)
+       (when on-error
+         (funcall on-error err))))))
 
 
 (cl-defun aichat-bingai-conversation-stream (text callback &rest settings
@@ -789,7 +798,7 @@ all types in `aichat-bingai--allowed-message-types'."
 `allowed-message-types' is the message type allowed to return,
 all types in `aichat-bingai--allowed-message-types'."
   (when (aichat-bingai-conversationing-p)
-    (error "Please wait for the conversation finished before call."))
+    (error "Please wait for the conversation finished before call"))
 
   (unless style
     (setq style aichat-bingai-conversation-style))
@@ -797,16 +806,18 @@ all types in `aichat-bingai--allowed-message-types'."
   (unless allowed-message-types
     (setq allowed-message-types (vector "Chat")))
 
-  (promise-then (aichat-bingai--send-request text style allowed-message-types options-sets
-                                             (lambda (message)
-                                               (when callback
-                                                 (funcall callback message))))
-                (lambda (result)
-                  (when on-success
-                    (funcall on-success result)))
-                (lambda (err)
-                  (when on-error
-                    (funcall on-error err)))))
+  (aio-with-async
+    (pcase (aio-await (aio-catch (aichat-bingai--send-request
+                                  text style allowed-message-types options-sets
+                                  (lambda (message)
+                                    (when callback
+                                      (funcall callback message))))))
+      (`(:success . ,result)
+       (when on-success
+         (funcall on-success result)))
+      (`(:error . ,err)
+       (when on-error
+         (funcall on-error err))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Messages API ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -878,7 +889,7 @@ all types in `aichat-bingai--allowed-message-types'."
   :group 'aichat-bingai
   :type 'symbol)
 
-(defface aichat-bingai-chat-prompt-face '((t (:height 0.8 :foreground "#006800")))
+(defface aichat-bingai-chat-prompt-face '((t (:height 0.8 :inherit font-lock-keyword-face)))
   "Face used for prompt overlay.")
 
 (cl-defstruct (aichat-bingai--chat
@@ -904,8 +915,8 @@ all types in `aichat-bingai--allowed-message-types'."
     (with-current-buffer chat-buffer
       (goto-char (point-max))
       (when (derived-mode-p 'markdown-mode)
-        (unless markdown-hide-markup
-          (markdown-toggle-markup-hiding)))
+        (when truncate-lines
+          (toggle-truncate-lines)))
       (when (and (featurep 'pangu-spacing) pangu-spacing-mode)
         (pangu-spacing-mode -1)))
     chat-buffer))
@@ -1015,24 +1026,25 @@ NEW-P is t, which means it is a new conversation."
     (if (not image-prompt)
         (aichat-bingai--chat-update-prompt chat nil)
       (aichat-bingai--chat-update-prompt chat "Generate image...")
-      (promise-then (aichat-bingai--image-create image-prompt)
-                    (lambda (paths)
-                      (aichat-bingai--chat-update-prompt chat nil)
-                      (when paths
-                        (with-current-buffer (aichat-bingai--chat-buffer chat)
-                          (goto-char (aichat-bingai--chat-reply-point chat))
-                          (save-mark-and-excursion
-                            (mapc (lambda (path)
-                                    (if (derived-mode-p 'org-mode)
-                                        (insert (format "\n[[file:%s]] \n" (cdr path)))
-                                      (insert (format "\n![%s](%s) \n" (car path) (cdr path)))))
-                                  paths))
-                          (if (derived-mode-p 'org-mode)
-                              (org-display-inline-images)
-                            (markdown-display-inline-images)))))
-                    (lambda (err)
-                      (message "Image create error: %s" err)
-                      (aichat-bingai--chat-update-prompt chat nil))))))
+      (aio-with-async
+        (pcase (aio-await (aio-catch (aichat-bingai--image-create image-prompt)))
+          (`(:success . ,paths)
+           (aichat-bingai--chat-update-prompt chat nil)
+           (when paths
+             (with-current-buffer (aichat-bingai--chat-buffer chat)
+               (goto-char (aichat-bingai--chat-reply-point chat))
+               (save-mark-and-excursion
+                 (mapc (lambda (path)
+                         (if (derived-mode-p 'org-mode)
+                             (insert (format "\n[[file:%s]] \n" (cdr path)))
+                           (insert (format "\n![%s](%s) \n" (car path) (cdr path)))))
+                       paths))
+               (if (derived-mode-p 'org-mode)
+                   (org-display-inline-images)
+                 (markdown-display-inline-images)))))
+          (`(:error . ,err)
+           (message "Image create error: %s" err)
+           (aichat-bingai--chat-update-prompt chat nil)))))))
 
 (defun aichat-bingai--chat-handle-reply-error (chat msg)
   (aichat-bingai--chat-update-prompt chat nil)
@@ -1091,41 +1103,42 @@ NEW-P is t, which means it is a new conversation."
   "Send the region or input to Bing and display the returned result to `aichat-bingai-assistant-buffer'."
   (interactive (list (aichat-read-region-or-input "Input text: ")))
   (when (and text (not (string-empty-p text)))
-    (aichat-bingai-conversation text
-                                :style style
-                                :allowed-message-types ["Chat"
-                                                        "GenerateContentQuery"]
-                                :on-success (lambda (msg)
-                                              (when-let ((content (aichat-bingai-message-type-2-text msg))
-                                                         (buffer (aichat-bingai-assistant-get-buffer)))
-                                                (with-current-buffer buffer
-                                                  (goto-char (point-max))
-                                                  (insert content)
-                                                  (insert "\n\n"))
-                                                (let ((image-prompt (aichat-bingai-message-type-2-image-prompt msg)))
-                                                  (if (not image-prompt)
-                                                      (funcall aichat-bingai-assistant-display-function buffer)
-                                                    (promise-then (aichat-bingai--image-create image-prompt)
-                                                                  (lambda (paths)
-                                                                    (when paths
-                                                                      (with-current-buffer buffer
-                                                                        (markdown-mode)
-                                                                        (goto-char (point-max))
-                                                                        (save-mark-and-excursion
-                                                                          (mapc (lambda (path)
-                                                                                  (if (derived-mode-p 'org-mode)
-                                                                                      (insert (format "\n[[file:%s]] \n" (cdr path)))
-                                                                                    (insert (format "\n![%s](%s) \n" (car path) (cdr path)))))
-                                                                                paths))
-                                                                        (if (derived-mode-p 'org-mode)
-                                                                            (org-display-inline-images)
-                                                                          (markdown-display-inline-images))))
-                                                                    (funcall aichat-bingai-assistant-display-function buffer))
-                                                                  (lambda (err)
-                                                                    (message "Image create error: %s" err)
-                                                                    (funcall aichat-bingai-assistant-display-function buffer)))))))
-                                :on-error (lambda (err)
-                                            (message "Error: %s" err)))))
+    (aichat-bingai-conversation
+     text
+     :style style
+     :allowed-message-types ["Chat" "GenerateContentQuery"]
+     :on-success (lambda (msg)
+                   (when-let ((content (aichat-bingai-message-type-2-text msg))
+                              (buffer (aichat-bingai-assistant-get-buffer)))
+                     (with-current-buffer buffer
+                       (let ((buffer-file-name "tmp.md"))
+                         (set-auto-mode t)
+                         (goto-char (point-max))
+                         (insert content)
+                         (insert "\n\n")))
+                     (let ((image-prompt (aichat-bingai-message-type-2-image-prompt msg)))
+                       (if (not image-prompt)
+                           (funcall aichat-bingai-assistant-display-function buffer)
+                         (aio-with-async
+                           (pcase (aio-await (aio-catch (aichat-bingai--image-create image-prompt)))
+                             (`(:success . ,paths)
+                              (when paths
+                                (with-current-buffer buffer
+                                  (markdown-mode)
+                                  (goto-char (point-max))
+                                  (save-mark-and-excursion
+                                    (mapc (lambda (path)
+                                            (if (derived-mode-p 'org-mode)
+                                                (insert (format "\n[[file:%s]] \n" (cdr path)))
+                                              (insert (format "\n![%s](%s) \n" (car path) (cdr path)))))
+                                          paths))
+                                  (if (derived-mode-p 'org-mode)
+                                      (org-display-inline-images)
+                                    (markdown-display-inline-images)))))
+                             (`(:error . ,err)
+                              (message "Image create error: %s" err)
+                              (funcall aichat-bingai-assistant-display-function buffer))))))))
+     :on-error (lambda (err) (message "Error: %s" err)))))
 
 (defun aichat-bingai-replace-or-insert (text &optional style)
   "Send the region or input to Bing and replace the selected region or insert at the current position with the returned result."

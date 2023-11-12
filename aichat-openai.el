@@ -164,22 +164,24 @@ Look https://platform.openai.com/docs/api-reference/chat."
 
     (aichat-debug "Request %s with data:\n%s\n" aichat-openai--chat-completions-url data)
 
-    (promise-then (aichat-http (concat aichat-openai-domain aichat-openai--chat-completions-url)
-                               :proxy aichat-openai-proxy
-                               :type aichat-openai--chat-completions-request-type
-                               :headers (aichat-openai--make-http-headers)
-                               :data data)
-                  (lambda (value)
-                    (aichat-debug "Received: %s" value)
-                    (seq-let (status headers body) value
-                      (if (string= "200" (car status))
-                          (when on-success
-                            (funcall on-success (aichat-json-parse body)))
-                        (when on-error
-                          (funcall on-error body)))))
-                  (lambda (err)
-                    (when on-error
-                      (funcall on-error err))))))
+    (aio-with-async
+      (pcase (aio-await (aio-catch
+                         (aichat-http (concat aichat-openai-domain aichat-openai--chat-completions-url)
+                                      :proxy aichat-openai-proxy
+                                      :type aichat-openai--chat-completions-request-type
+                                      :headers (aichat-openai--make-http-headers)
+                                      :data data)))
+        (`(:success . ,value)
+         (aichat-debug "Received: %s" value)
+         (seq-let (status headers body) value
+           (if (string= "200" (car status))
+               (when on-success
+                 (funcall on-success (aichat-json-parse body)))
+             (when on-error
+               (funcall on-error body)))))
+        (`(:error . ,err)
+         (when on-error
+           (funcall on-error err)))))))
 
 (cl-defun aichat-openai-chat-completions-stream (messages callback &rest settings
                                                           &key
@@ -202,26 +204,29 @@ Look https://platform.openai.com/docs/api-reference/chat for more request params
 
     (aichat-debug "Request %s with data:\n%s\n" aichat-openai--chat-completions-url data)
 
-    (promise-then (aichat-http-event-source (concat aichat-openai-domain aichat-openai--chat-completions-url)
-                                            (lambda (event-id event-data)
-                                              (aichat-debug "Received event: %s, data: \n%s\n" event-id event-data)
-                                              (unless (string= event-data "[DONE]")
-                                                (when callback
-                                                  (funcall callback (aichat-json-parse event-data)))))
-                                            :proxy aichat-openai-proxy
-                                            :type aichat-openai--chat-completions-request-type
-                                            :headers (aichat-openai--make-http-headers)
-                                            :data data)
-                  (lambda (value)
-                    (seq-let (status headers body) value
-                      (if (string= "200" (car status))
-                          (when on-success
-                            (funcall on-success body))
-                        (when on-error
-                          (funcall on-error body)))))
-                  (lambda (err)
-                    (when on-error
-                      (funcall on-error err))))))
+    (aio-with-async
+      (pcase (aio-await (aio-catch
+                         (aichat-http-event-source
+                          (concat aichat-openai-domain aichat-openai--chat-completions-url)
+                          (lambda (event-id event-data)
+                            (aichat-debug "Received event: %s, data: \n%s\n" event-id event-data)
+                            (unless (string= event-data "[DONE]")
+                              (when callback
+                                (funcall callback (aichat-json-parse event-data)))))
+                          :proxy aichat-openai-proxy
+                          :type aichat-openai--chat-completions-request-type
+                          :headers (aichat-openai--make-http-headers)
+                          :data data)))
+        (`(:success . ,value)
+         (seq-let (status headers body) value
+           (if (string= "200" (car status))
+               (when on-success
+                 (funcall on-success body))
+             (when on-error
+               (funcall on-error body)))))
+        (`(:error . ,err)
+         (when on-error
+           (funcall on-error err)))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Message API ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

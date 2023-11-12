@@ -10,5 +10,5 @@
 (development
  (depends-on "websocket")
  (depends-on "markdown-mode")
- (depends-on "async-await")
+ (depends-on "aio")
  (depends-on "ert-runner"))

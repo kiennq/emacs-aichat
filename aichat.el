@@ -10,12 +10,13 @@
 ;; Last-Updated: 2023-03-12 15:06:06
 ;;           By: xhcoding
 ;; URL: https://github.com/xhcoding/emacs-aichat
-;; Keywords: 
+;; Keywords:
+;; Package-Requires: ((emacs "26.1") (aio "1.0"))
 ;; Compatibility: GNU Emacs 30.0.50
 ;;
 ;; Features that might be required by this library:
 ;;
-;; 
+;;
 ;;
 
 ;;; This file is NOT part of GNU Emacs
@@ -40,7 +41,7 @@
 ;;; Commentary:
 ;;
 ;; aichat.el
-;; 
+;;
 
 ;;; Installation:
 ;;
@@ -57,7 +58,7 @@
 
 ;;; Customize:
 ;;
-;; 
+;;
 ;;
 ;; All of the above can customize by:
 ;;      M-x customize-group RET aichat RET
@@ -71,12 +72,12 @@
 
 ;;; Acknowledgements:
 ;;
-;; 
+;;
 ;;
 
 ;;; TODO
 ;;
-;; 
+;;
 ;;
 
 ;;; Require
