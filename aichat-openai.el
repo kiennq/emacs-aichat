@@ -129,11 +129,8 @@
                                                 (funcall aichat-openai-api-key)
                                               aichat-openai-api-key)))))
 
-(cl-defun aichat-openai-make-chat-messages (&rest settings
-                                                  &key
-                                                  user
-                                                  system
-                                                  assistant)
+(cl-defun aichat-openai-make-chat-messages ( &rest settings
+                                             &key _user _system _assistant)
   "Make chat completions messages.
 
 (aichat-openai--make-chat-messages

@@ -11,7 +11,7 @@
 ;;           By: xhcoding
 ;; URL: https://github.com/xhcoding/emacs-aichat
 ;; Keywords:
-;; Package-Requires: ((emacs "26.1") (aio "1.0"))
+;; Package-Requires: ((emacs "26.1") (aio "1.0") (websocket "1.15"))
 ;; Compatibility: GNU Emacs 30.0.50
 ;;
 ;; Features that might be required by this library:

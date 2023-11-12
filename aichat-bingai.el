@@ -92,14 +92,15 @@
   :group 'aichat
   :prefix "aichat-bingai-")
 
-(defcustom aichat-bingai-cookies-file nil
+(defcustom aichat-bingai-cookies-file 'interactive
   "The path of www.bing.com cookies file.
 
 When you set this value with:
-- 'interactive: it will get the cookies interactively
+- `interactive': it will get the cookies interactively
 - a file name: bingai will login to www.bing.com through the cookies in the file."
   :group 'aichat-bingai
-  :type '(choice (const :tag "Get cookies interactively" 'interactive)
+  :type '(choice (const :tag "Get cookies interactively." interactive)
+                 (const :tag "Get cookies from shell command." nil)
                  (string :tag "Cookie file name")))
 
 (defcustom aichat-bingai-conversation-style 'balanced
@@ -118,17 +119,25 @@ When you set this value with:
   :type 'string)
 
 
+(declare-function markdown-mode "ext:markdown-mode")
+(declare-function markdown-previous-visible-heading "ext:markdown-mode")
+(declare-function markdown-display-inline-images "ext:markdown-mode")
+(declare-function org-previous-visible-heading "ext:org")
+(declare-function org-display-inline-images "ext:org")
+(declare-function org-insert-link "ext:org")
+(declare-function pangu-spacing-mode "ext:pangu-spacing")
+(defvar pangu-spacing-mode)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; websocket ;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun aichat-bingai--create-proxy-connection(name proxy-host proxy-port server-host server-port use-ssl)
-  (let ((conn)
-        (finished))
+  (let (conn finished)
     (setq conn (make-network-process
                 :name name
                 :buffer nil
                 :host proxy-host
                 :service proxy-port
-                :filter (lambda (proc data)
+                :filter (lambda (_proc _data)
                           (setq finished t))))
     (process-send-string
      conn
@@ -504,7 +513,7 @@ Call resolve when the handshake with chathub passed."
                      (condition-case error
                          (progn
                            (aichat-debug "Receive handshake response: %s" text)
-                           (aichat-json-parse (car (split-string text aichat-bingai--chathub-message-delimiter)))
+                           ;; (aichat-json-parse (car (split-string text aichat-bingai--chathub-message-delimiter)))
                            (aichat-bingai--chathub-send-heart ws)
                            (setf (websocket-on-message ws)
                                  (lambda (_ws frame)
@@ -1119,7 +1128,7 @@ NEW-P is t, which means it is a new conversation."
                    (when-let ((content (aichat-bingai-message-type-2-text msg))
                               (buffer (aichat-bingai-assistant-get-buffer)))
                      (with-current-buffer buffer
-                       (let ((buffer-file-name "tmp.md"))
+                       (let ((buffer-file-name "aichat-tmp.md"))
                          (set-auto-mode t)
                          (goto-char (point-max))
                          (insert content)
@@ -1132,17 +1141,18 @@ NEW-P is t, which means it is a new conversation."
                              (`(:success . ,paths)
                               (when paths
                                 (with-current-buffer buffer
-                                  (markdown-mode)
-                                  (goto-char (point-max))
-                                  (save-mark-and-excursion
-                                    (mapc (lambda (path)
-                                            (if (derived-mode-p 'org-mode)
-                                                (insert (format "\n[[file:%s]] \n" (cdr path)))
-                                              (insert (format "\n![%s](%s) \n" (car path) (cdr path)))))
-                                          paths))
-                                  (if (derived-mode-p 'org-mode)
-                                      (org-display-inline-images)
-                                    (markdown-display-inline-images)))))
+                                  (let ((buffer-file-name "aichat-tmp.md"))
+                                    (set-auto-mode t)
+                                    (goto-char (point-max))
+                                    (save-mark-and-excursion
+                                      (mapc (lambda (path)
+                                              (if (derived-mode-p 'org-mode)
+                                                  (insert (format "\n[[file:%s]] \n" (cdr path)))
+                                                (insert (format "\n![%s](%s) \n" (car path) (cdr path)))))
+                                            paths))
+                                    (if (derived-mode-p 'org-mode)
+                                        (org-display-inline-images)
+                                      (markdown-display-inline-images))))))
                              (`(:error . ,err)
                               (message "Image create error: %s" err)
                               (funcall aichat-bingai-assistant-display-function buffer))))))))

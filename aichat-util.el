@@ -195,8 +195,8 @@
 
 (defun aichat-read-header-value (header-key headers-alist)
   "Read header value with HEADER-KEY in HEADERS-ALIST."
-  (alist-get header-key headers-alist nil nil '(lambda (o1 o2)
-                                                 (string= (downcase o1) (downcase o2)))))
+  (alist-get header-key headers-alist nil nil #'(lambda (o1 o2)
+                                                  (string= (downcase o1) (downcase o2)))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; JSON utils ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1448,13 +1448,13 @@ CALLBACK      (string)   callbacl to receive reported http data.
 (cl-defun aichat-http (url &rest settings
                            &key
                            (backend nil)
-                           (proxy nil)
-                           (type nil)
-                           (params nil)
-                           (headers nil)
-                           (data nil)
-                           (callback-data nil)
-                           (callback nil))
+                           (_proxy nil)
+                           (_type nil)
+                           (_params nil)
+                           (_headers nil)
+                           (_data nil)
+                           (_callback-data nil)
+                           (_callback nil))
   "Request URL with property list SETTINGS as follow. Return value is promise,
 the format of resolve value is (resp-status resp-headers resp-body).
 
