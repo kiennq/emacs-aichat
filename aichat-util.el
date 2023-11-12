@@ -224,11 +224,15 @@
            (json-false nil))
        (json-read-from-string ,str))))
 
+(defmacro aichat-get-file-content (file)
+  "Get content of FILE."
+  `(with-temp-buffer
+     (insert-file-contents ,file)
+     (buffer-string)))
+
 (defun aichat-json-parse-file (file)
   "Read the JSON object contained in FILE and return it."
-  (with-temp-buffer
-    (insert-file-contents file)
-    (aichat-json-parse (buffer-string))))
+  (aichat-json-parse (aichat-get-file-content file)))
 
 (defmacro aichat-json-access (object str)
   "Access json element with {object}[array-index]."
@@ -271,25 +275,29 @@ Returns stdout on success, otherwise returns nil."
   (when-let ((installed (aio-await (aichat-shell-command "python -c \"import rookiepy\""))))
     t))
 
+(defun aichat-get-cookies-from-string (json-str)
+  "Get cookies from JSON-STR."
+  (let ((cookies (aichat-json-parse json-str)))
+    (mapcar (lambda (cookie)
+              (let ((name (alist-get 'name cookie))
+                    (value (alist-get 'value cookie))
+                    (expires (if (assq 'expirationDate cookie)
+                                 (format-time-string "%FT%T%z"
+                                                     (seconds-to-time
+                                                      (alist-get 'expirationDate cookie)))
+                               nil))
+                    (domain (alist-get 'domain cookie))
+                    (localpart (alist-get 'path cookie))
+                    (secure (if (eq (alist-get 'secure cookie) :json-false)
+                                nil
+                              t)))
+                (list name value expires domain localpart secure)))
+            cookies)))
+
 (defun aichat-get-cookies-from-file (filename)
   "Get cookies from FILENAME."
   (if (file-exists-p filename)
-      (let ((cookies (aichat-json-parse-file filename)))
-        (mapcar (lambda (cookie)
-                  (let ((name (alist-get 'name cookie))
-                        (value (alist-get 'value cookie))
-                        (expires (if (assq 'expirationDate cookie)
-                                     (format-time-string "%FT%T%z"
-                                                         (seconds-to-time
-                                                          (alist-get 'expirationDate cookie)))
-                                   nil))
-                        (domain (alist-get 'domain cookie))
-                        (localpart (alist-get 'path cookie))
-                        (secure (if (eq (alist-get 'secure cookie) :json-false)
-                                    nil
-                                  t)))
-                    (list name value expires domain localpart secure)))
-                cookies))
+      (aichat-get-cookies-from-string (aichat-get-file-content filename))
     (error "%s not exists" filename)))
 
 (defun aichat--make-get-cookies-command(domain browser-name)
@@ -323,9 +331,12 @@ Returns stdout on success, otherwise returns nil."
 
 (aio-defun aichat-get-cookies (domain &optional cookie-file)
   "Get cookies from COOKIE-FILE if non-nil, otherwise get cookies from shell."
-  (if cookie-file
-      (aichat-get-cookies-from-file cookie-file)
-    (aio-await (aichat-get-cookies-from-shell domain aichat-browser-name))))
+  (pcase cookie-file
+    ('interactive
+     (aichat-get-cookies-from-string (read-from-minibuffer "Enter json cookies (via Cookie-Editor): ")))
+    (`nil
+     (aio-await (aichat-get-cookies-from-shell domain aichat-browser-name)))
+    (_ (aichat-get-cookies-from-file cookie-file))))
 
 (aio-defun aichat-refresh-cookies (domain &optional cookie-file)
   "Refresh `domain' cookies.
@@ -336,7 +347,9 @@ Re-fetching cookies from `domain'"
     (aichat-debug "%s cookies:\n%s\n" domain cookies)
     (ignore-errors (url-cookie-delete-cookies domain))
     (dolist (cookie cookies)
-      (apply #'url-cookie-store cookie))))
+      (apply #'url-cookie-store cookie))
+    (setq url-cookies-changed-since-last-save t)
+    (url-cookie-write-file)))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; HTTP utils ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

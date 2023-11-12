@@ -95,9 +95,12 @@
 (defcustom aichat-bingai-cookies-file nil
   "The path of www.bing.com cookies file.
 
-When you set this value, bingai will login to www.bing.com through the cookies in the file."
+When you set this value with:
+- 'interactive: it will get the cookies interactively
+- a file name: bingai will login to www.bing.com through the cookies in the file."
   :group 'aichat-bingai
-  :type 'string)
+  :type '(choice (const :tag "Get cookies interactively" 'interactive)
+                 (string :tag "Cookie file name")))
 
 (defcustom aichat-bingai-conversation-style 'balanced
   "Conversation style."
@@ -294,6 +297,11 @@ to the websocket protocol.
     (aio-await (aichat-refresh-cookies aichat-bingai--domain aichat-bingai-cookies-file))
     (unless (aichat-bingai--login-p)
       (error "Can not get correct cookie for login!"))))
+
+(defun aichat-bingai-auth-refresh ()
+  "Refresh authentication for bingAI."
+  (interactive)
+  (aichat-refresh-cookies aichat-bingai--domain aichat-bingai-cookies-file))
 
 (defconst aichat-bingai--create-conversation-url "https://www.bing.com/turing/conversation/create"
   "The url of create conversation.")
