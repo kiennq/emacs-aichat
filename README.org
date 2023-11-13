@@ -12,11 +12,25 @@ Use AI chat features in Emacs, currently including Bing Chat and OpenAI’s Chat
 ** Requirements
 
 - [[https://github.com/ahyatt/emacs-websocket][emacs-websocket]] To communicate with Bing Chat, if you have already installed this package, please update to the latest version.
-- [[https://github.com/chuntaro/emacs-async-await][emacs-async-await]]
+- [[https://github.com/kiennq/emacs-aio][emacs-aio]]
 - [[https://github.com/jrblevin/markdown-mode][markdown-mode]]
 
 ** Install
+*** Via [[https://github.com/quelpa/quelpa][Quelpa]]
+#+begin_src elisp
+  (use-package aichat
+    :quelpa (aichat :fetcher github-ssh :repo "kiennq/emacs-aichat" :version-type elpa)
+    :defer t
+    :init
+    (setq aichat-bingai-cookies-file 'interactive)
+    (with-eval-after-load 'evil
+      (evil-define-key 'normal 'umbrella-keybind-mode
+        (kbd "SPC a a") #'aichat-bingai-chat)
+      (evil-define-key 'visual 'umbrella-keybind-mode
+        (kbd "SPC a a") #'aichat-bingai-chat)))
+#+end_src
 
+*** Manually
 Clone the repository to your local machine, and add the path to your =load-path= :
 
 #+begin_src sh

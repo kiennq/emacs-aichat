@@ -295,7 +295,7 @@ to the websocket protocol.
                          (append url-cookie-secure-storage url-cookie-storage)))
               (user (seq-find
                      (lambda (cookie)
-                       (string= (aref cookie 1) "_U"))
+                       (string= (aref cookie 1) "_UR"))
                      (cdr host-cookies))))
     (and user
          (not (url-cookie-expired-p user)))))
