@@ -769,7 +769,6 @@ Call resolve when the handshake with chathub passed."
 
 (defun aichat-bingai-conversation-reset ()
   "Reset conversation."
-  (interactive)
   (aichat-bingai--stop-session))
 
 (cl-defun aichat-bingai-conversation (text &rest settings
@@ -1069,7 +1068,12 @@ NEW-P is t, which means it is a new conversation."
 ;;;###autoload
 (defun aichat-bingai-chat (said &optional style)
   "Chat with Bing AI."
-  (interactive (list (completing-read "You say: " aichat-bingai--chat-suggestion nil nil)))
+  (interactive (list
+                (if (use-region-p)
+                    (format "%s\n%s"
+                            (read-string "Prompt for selected text: " )
+                            (buffer-substring (region-beginning) (region-end)))
+                (completing-read "You say: " aichat-bingai--chat-suggestion nil nil))))
   (when (and (car current-prefix-arg)
              (= (car current-prefix-arg) 4))
     (aichat-bingai-conversation-reset))
