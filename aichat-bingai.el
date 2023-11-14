@@ -780,7 +780,7 @@ Call resolve when the handshake with chathub passed."
                                            (on-error nil))
   "Send a chat TEXT to Bing.
 
-`style' is the conversation style, look `aichat-bingai-conversation-stye' for detail.
+`style' is the conversation style, look `aichat-bingai-conversation-style' for detail.
 `allowed-message-types' is the message type allowed to return,
 all types in `aichat-bingai--allowed-message-types'."
   (when (aichat-bingai-conversationing-p)
@@ -810,7 +810,7 @@ all types in `aichat-bingai--allowed-message-types'."
                                                   (on-error nil))
   "Send a chat TEXT to Bing.
 
-`style' is the conversation style, look `aichat-bingai-conversation-stye' for detail.
+`style' is the conversation style, look `aichat-bingai-conversation-style' for detail.
 `allowed-message-types' is the message type allowed to return,
 all types in `aichat-bingai--allowed-message-types'."
   (when (aichat-bingai-conversationing-p)
