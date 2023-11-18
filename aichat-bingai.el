@@ -317,7 +317,7 @@ to the websocket protocol.
 
 (defconst aichat-bingai--conversation-headers
   `(("accept" . "application/json")
-    ("accept-language" . "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6")
+    ("accept-language" . "en-US;q=0.9,en;q=0.8,en;q=0.7")
     ("content-type" . "application/json")
     ("referer" . "https://www.bing.com/search?q=Bing+AI&showconv=1")
     ("sec-ch-ua" . "\"Microsoft Edge\"=\"111\", \"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"111\"")
@@ -767,8 +767,10 @@ Call resolve when the handshake with chathub passed."
   (aichat-bingai--ensure-conversation-valid)
   (not (aichat-bingai--get-current-session)))
 
+;;;###autoload
 (defun aichat-bingai-conversation-reset ()
   "Reset conversation."
+  (interactive)
   (aichat-bingai--stop-session))
 
 (cl-defun aichat-bingai-conversation (text &rest settings
