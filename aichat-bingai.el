@@ -841,7 +841,8 @@ all types in `aichat-bingai--allowed-message-types'."
 
 (defun aichat-bingai-message-type-1-text (message)
   "message[arguments][0][messages][0][text]."
-  (aichat-json-access message "{arguments}[0]{messages}[0]{text}"))
+  (or (aichat-json-access message "{arguments}[0]{messages}[0]{adaptiveCards}[0]{body}[0]{text}")
+      (aichat-json-access message "{arguments}[0]{messages}[0]{text}")))
 
 (defun aichat-bingai-message-type-1-message-type (message)
   "msg[arguments][0][messages][0][messageType]."
@@ -1015,28 +1016,28 @@ NEW-P is t, which means it is a new conversation."
         (aichat-bingai--chat-convert-to-org))))
 
   ;; insert source-attrs
-  (when-let ((source-attrs (aichat-bingai-message-type-2-source-attrs msg)))
-    (with-current-buffer (aichat-bingai--chat-buffer chat)
-      (save-mark-and-excursion
-        (goto-char (aichat-bingai--chat-reply-point chat))
-        (end-of-line)
-        (insert "\n")
-        (let ((index 1)
-              (title)
-              (url))
-          (mapc (lambda (source-attr)
-                  (aichat-debug "Insert source attrs: %s"  source-attr)
-                  (setq url (aichat-json-access source-attr "{seeMoreUrl}"))
-                  (setq title (or (aichat-json-access source-attr "{providerDisplayName}")
-                                  url))
-                  (insert (format "%s. " index))
-                  (if (derived-mode-p 'org-mode)
-                      (org-insert-link nil url (or title url))
-                    (insert (format "[%s](%s)" (or title url) url)))
-                  (insert "\n")
-                  (cl-incf index))
-                source-attrs))
-        (insert "\n"))))
+  ;; (when-let ((source-attrs (aichat-bingai-message-type-2-source-attrs msg)))
+  ;;   (with-current-buffer (aichat-bingai--chat-buffer chat)
+  ;;     (save-mark-and-excursion
+  ;;       (goto-char (aichat-bingai--chat-reply-point chat))
+  ;;       (end-of-line)
+  ;;       (insert "\n")
+  ;;       (let ((index 1)
+  ;;             (title)
+  ;;             (url))
+  ;;         (mapc (lambda (source-attr)
+  ;;                 (aichat-debug "Insert source attrs: %s"  source-attr)
+  ;;                 (setq url (aichat-json-access source-attr "{seeMoreUrl}"))
+  ;;                 (setq title (or (aichat-json-access source-attr "{providerDisplayName}")
+  ;;                                 url))
+  ;;                 (insert (format "%s. " index))
+  ;;                 (if (derived-mode-p 'org-mode)
+  ;;                     (org-insert-link nil url (or title url))
+  ;;                   (insert (format "[%s](%s)" (or title url) url)))
+  ;;                 (insert "\n")
+  ;;                 (cl-incf index))
+  ;;               source-attrs))
+  ;;       (insert "\n"))))
 
   ;; generage image
   (let ((image-prompt (aichat-bingai-message-type-2-image-prompt msg)))

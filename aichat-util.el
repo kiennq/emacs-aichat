@@ -183,7 +183,9 @@
 
 (defmacro aichat--reject-fn (promise)
   "Return a reject-fn for PROMISE."
-  `(lambda (res) (aio-cancel ,promise res)))
+  `(lambda (res)
+     (message "%s::%s" (propertize "AiChat" 'face 'error) res)
+     (aio-resolve ,promise (lambda () nil))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Basic Utils ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -246,7 +248,7 @@
                    (setq res `(alist-get ',(intern (substring str (1+ start-pos) index)) ,res)))
                   (93
                    (setq res `(aref ,res ,(string-to-number (substring str (1+ start-pos) index)))))))
-    res))
+    `(ignore-errors ,res)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Process utils ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
